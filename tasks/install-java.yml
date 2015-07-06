@@ -1,9 +1,23 @@
-- name: Add JRE ppa
-  apt_repository: repo=ppa:webupd8team/java state=present
+- name: Check if java is installed
+  command: java -version
+  register: java_check
 
-- name: Automatically select the Oracle License
-  shell: echo debconf shared/accepted-oracle-license-v1-1 select true | sudo debconf-set-selections
+- name: Download Java
+  command: "wget -q -O {{java_archive}} --no-check-certificate --no-cookies --header 'Cookie: oraclelicense=accept-securebackup-cookie' {{download_url}} creates={{java_archive}}"
+  when: java_check.rc == 1
 
-- name: Install JRE
-  apt: pkg=oracle-java7-installer state=latest update-cache=yes force=no
+- name: Unpack archive
+  command: "tar -zxf {{java_archive}} -C {{download_folder}} creates={{java_name}}"
+  when: java_check.rc == 1
 
+- name: Fix ownership
+  file: state=directory path={{java_name}} owner=root group=root recurse=yes
+  when: java_check.rc == 1
+
+- name: Make Java available for system
+  command: 'alternatives --install "/usr/bin/java" "java" "{{java_name}}/bin/java" 2000'
+  when: java_check.rc == 1
+
+- name: Clean up
+  file: state=absent path={{java_archive}}
+  when: java_check.rc == 1

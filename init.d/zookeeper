@@ -1,64 +1,134 @@
-#! /bin/sh
+#!/bin/sh
+#
+# zookeeper ZooKeeper Server
+#
+# chkconfig: - 18 05
+# description: Enable ZooKeeper Server
+#
 
 ### BEGIN INIT INFO
-# Provides:		kafka
-# Required-Start:	$remote_fs $syslog
-# Required-Stop:	$remote_fs $syslog
-# Default-Start:	2 3 4 5
-# Default-Stop:		
-# Short-Description:	Kafka daemon
+# Provides:          zookeeper
+# Default-Start:
+# Default-Stop:
+# Required-Start:    $remote_fs $network
+# Required-Stop:     $remote_fs $network
+# Description:       zookeeper Server
+# Short-Description: Enable zookeeper  Server
 ### END INIT INFO
 
-set -e
+# Source function library.
+. /etc/rc.d/init.d/functions
 
-# /etc/init.d/zookeeper: start and stop the Zookeeper daemon
+prog="zookeeper"
+desc="zookeeper Server"
 
-. /lib/lsb/init-functions
+[ -e /etc/sysconfig/$prog ] && . /etc/sysconfig/$prog
 
-# Are we running from init?
-run_by_init() {
-    ([ "$previous" ] && [ "$runlevel" ]) || [ "$runlevel" = S ]
+lockfile="/var/lock/subsys/$prog"
+pidfile="/var/run/$prog.pid"
+
+[ "x$JMXLOCALONLY" = "x" ] && JMXLOCALONLY=false
+
+if [ "x$JMXDISABLE" = "x" ]
+then
+    # for some reason these two options are necessary on jdk6 on Ubuntu
+    #   accord to the docs they are not necessary, but otw jconsole cannot
+    #   do a local attach
+    ZOOMAIN="-Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.local.only=$JMXLOCALONLY org.apache.zookeeper.server.quorum.QuorumPeerMain"
+else
+    ZOOMAIN="org.apache.zookeeper.server.quorum.QuorumPeerMain"
+fi
+
+ZOOBINDIR="/usr/local/zookeeper/bin"
+ZOOCFGDIR="/usr/local/zookeeper/conf"
+ZOOCFG="zoo.cfg"
+ZOOCFG="$ZOOCFGDIR/$ZOOCFG"
+ZOO_LOG_DIR="/var/log/zookeeper"
+
+[ -e "$ZOOCFGDIR/java.env" ] && . "$ZOOCFGDIR/java.env"
+
+[ "x$ZOO_LOG4J_PROP" = "x" ] && ZOO_LOG4J_PROP="INFO,CONSOLE"
+
+for f in ${ZOOBINDIR}/../zookeeper-*.jar
+do 
+    CLASSPATH="$CLASSPATH:$f"
+done
+
+ZOOLIBDIR=${ZOOLIBDIR:-$ZOOBINDIR/../lib}
+for i in "$ZOOLIBDIR"/*.jar
+do
+    CLASSPATH="$CLASSPATH:$i"
+done
+
+#add the zoocfg dir to classpath
+CLASSPATH=$ZOOCFGDIR:$CLASSPATH
+
+cmd="java  \"-Dzookeeper.log.dir=${ZOO_LOG_DIR}\" \"-Dzookeeper.root.logger=${ZOO_LOG4J_PROP}\" -cp ${CLASSPATH} ${JVMFLAGS} ${ZOOMAIN} ${ZOOCFG} & echo \$! > ${pidfile}"
+
+
+start() {
+    echo -n $"Starting $desc ($prog): "
+    touch $pidfile && chown zookeeper $pidfile
+    daemon --user zookeeper --pidfile $pidfile "$cmd"
+    retval=$?
+    echo
+    [ $retval -eq 0 ] && touch $lockfile
+    return $retval
 }
 
-export PATH="${PATH:+$PATH:}/usr/sbin:/sbin"
+stop() {
+    echo -n $"Stopping $prog: "
+    killproc -p $pidfile  $prog
+    retval=$?
+    echo
+    [ $retval -eq 0 ] && rm -f $lockfile
+    return $retval
+}
+
+restart() {
+    stop
+    start
+}
+
+reload() {
+    restart
+}
+
+get_status() {
+    status $prog
+    RETVAL=$?
+    STAT=`echo stat | nc localhost $(grep clientPort $ZOOCFG | sed -e 's/.*=//') 2> /dev/null| grep Mode`
+    if [ "x$STAT" = "x" ]
+    then
+        echo "Error contacting service."
+    else
+        echo $STAT
+    fi
+}
 
 case "$1" in
-  start)
-	log_daemon_msg "Starting Zookeeper" "zookeeper" || true
-	if start-stop-daemon --start --quiet --oknodo --pidfile /var/run/kafka.pid --exec  /usr/local/zookeeper/bin/zkServer.sh start -- ; then
-	    log_end_msg 0 || true
-	else
-	    log_end_msg 1 || true
-	fi
-	;;
-  stop)
-	log_daemon_msg "Stopping Zookeeper" "zookeeper" || true
-  /usr/local/zookeeper/bin/zkServer.sh stop
-	if start-stop-daemon --stop --quiet --oknodo --pidfile /var/run/zookeeper.pid -- ; then
-	    log_end_msg 0 || true
-	else
-	    log_end_msg 1 || true
-	fi
-	;;
-
-  restart)
-	log_daemon_msg "Restarting Zookeeper" "zookeeper" || true
-	start-stop-daemon --stop --quiet --oknodo --retry 30 --pidfile /var/run/zookeeper.pid
-	if start-stop-daemon --start --quiet --oknodo --pidfile /var/run/zookeeper.pid --exec  /usr/local/zookeeper/bin/zkServer.sh restart ; then
-	    log_end_msg 0 || true
-	else
-	    log_end_msg 1 || true
-	fi
-	;;
-
-  status)
-	status_of_proc -p /var/run/zookeeper.pid && exit 0 || exit $?
-	;;
-
-  *)
-	log_action_msg "Usage: /etc/init.d/ssh {start|stop|restart|status}" || true
-	exit 1
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    restart)
+        restart
+        ;;
+    reload)
+        reload
+        ;;
+    condrestart)
+        [ -e /var/lock/subsys/$prog ] && restart
+        RETVAL=$?
+        ;;
+    status)
+        get_status
+        ;;
+    *)
+        echo $"Usage: $0 {start|stop|restart|reload|condrestart|status}"
+        RETVAL=1
 esac
 
-exit 0
-
+exit $RETVAL

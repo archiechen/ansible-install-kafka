@@ -1,6 +1,12 @@
-- name: Download SBT {{ sbt_version }}
-  get_url: url=http://dl.bintray.com/sbt/debian/sbt-{{ sbt_version }}.deb dest=/tmp/sbt-{{ sbt_version }}.deb mode=0644
-  
-- name: Install SBT {{ sbt_version }}
-  apt: deb=/tmp/sbt-{{ sbt_version }}.deb state=installed 
+- name: Check if sbt is installed
+  command: rpm -q sbt
+  register: sbt_check
+  ignore_errors: True
 
+- name: Download sbt
+  get_url: url=https://bintray.com/sbt/rpm/rpm dest=/etc/yum.repos.d/bintray-sbt-rpm.repo
+  when: sbt_check.rc == 1
+
+- name: Install sbt
+  yum: name=sbt state=present
+  when: sbt_check.rc == 1
